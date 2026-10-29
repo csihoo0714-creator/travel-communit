@@ -39,8 +39,11 @@
                     <span class="hover:text-sky-600 cursor-pointer" onclick="goHome()">전체 국가</span>
                 </nav>
 
-                <!-- Search / Write Action -->
+                <!-- Auth & Action Buttons -->
                 <div class="flex items-center space-x-3">
+                    <div id="authNav">
+                        <!-- Dynamic Auth State (Login/Logout) -->
+                    </div>
                     <button onclick="openPostModal()" class="bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors flex items-center space-x-1.5 shadow-sm">
                         <i data-lucide="pen-line" class="w-4 h-4"></i>
                         <span>글쓰기</span>
@@ -72,7 +75,7 @@
                 <!-- 대한민국 -->
                 <div onclick="selectCountry('kr')" class="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-slate-200 cursor-pointer">
                     <div class="h-48 overflow-hidden relative">
-                        <img src="https://images.unsplash.com/photo-1546874177-9e664107314e?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D" alt="한국" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                        <img src="https://images.unsplash.com/photo-1546874177-9e664107314e?q=80&w=1169&auto=format&fit=crop" alt="한국" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
                         <span class="absolute top-4 left-4 text-3xl">🇰🇷</span>
                     </div>
                     <div class="p-6">
@@ -272,9 +275,43 @@
         </div>
     </div>
 
+    <!-- Login / Signup Modal -->
+    <div id="authModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+            <button onclick="closeAuthModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+                <i data-lucide="x" class="w-6 h-6"></i>
+            </button>
+            
+            <!-- Modal Tabs -->
+            <div class="flex border-b border-slate-200 mb-6">
+                <button id="tabLoginBtn" onclick="switchAuthTab('login')" class="flex-1 py-3 text-sm font-bold text-sky-600 border-b-2 border-sky-600">로그인</button>
+                <button id="tabSignupBtn" onclick="switchAuthTab('signup')" class="flex-1 py-3 text-sm font-bold text-slate-400 hover:text-slate-600">회원가입</button>
+            </div>
+
+            <!-- Form -->
+            <form id="authForm" onsubmit="handleAuthSubmit(event)" class="space-y-4">
+                <div id="nicknameField" class="hidden">
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">닉네임</label>
+                    <input type="text" id="authNickname" placeholder="사용할 닉네임" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">이메일</label>
+                    <input type="email" id="authEmail" placeholder="example@domain.com" required class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">비밀번호</label>
+                    <input type="password" id="authPassword" placeholder="••••••••" required class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500">
+                </div>
+                
+                <button type="submit" id="authSubmitBtn" class="w-full py-3 mt-2 text-sm font-bold text-white bg-sky-600 hover:bg-sky-700 rounded-xl shadow-md transition-colors">
+                    로그인
+                </button>
+            </form>
+        </div>
+    </div>
+
     <!-- JavaScript Data & Logic -->
     <script>
-        // Travel Database (3 Countries, 2 Cities Each - South Korea features Sejong)
         const travelData = {
             kr: {
                 name: "대한민국",
@@ -290,7 +327,7 @@
                         foods: ["명동 K-길거리 음식", "마장동 한우", "광장시장 빈대떡"],
                         tip: "기후동행카드나 T-money 교통카드를 이용하면 지하철과 버스를 편리하고 저렴하게 이용할 수 있습니다.",
                         images: [
-                            "https://images.unsplash.com/photo-1546874177-9e664107314e?q=80&w=1169&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D",
+                            "https://images.unsplash.com/photo-1546874177-9e664107314e?q=80&w=1169&auto=format&fit=crop",
                             "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=600&q=80",
                             "https://images.unsplash.com/photo-1517154421773-0529f29ea451?auto=format&fit=crop&w=600&q=80"
                         ],
@@ -308,9 +345,9 @@
                         foods: ["조치원 파닭", "세종 암소 한우", "호수공원 브런치"],
                         tip: "이응다리의 화려한 조명 야경은 저녁 8시 이후가 피크입니다. 공공자전거 '어울링'을 활용해 호수공원을 산책해보세요.",
                         images: [
-                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D",
-                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D",
-                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D"
+                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop",
+                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop",
+                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop"
                         ],
                         posts: [
                             { id: 3, tag: "팁", title: "이응다리 밤산책 및 어울링 자전거 이용 후기", author: "세종시민", date: "5시간 전", likes: 18, content: "금강 위를 도는 복층 고리형 보행교 야경이 예술입니다. 어울링 자전거 앱 설치 후 1시간 천원으로 즐기기 완벽해요!" },
@@ -407,6 +444,8 @@
         let currentCountryKey = null;
         let currentCityKey = null;
         let activeFilter = 'all';
+        let currentAuthMode = 'login'; // 'login' or 'signup'
+        let currentUser = JSON.parse(localStorage.getItem('travelhub_user')) || null;
 
         // DOM Elements
         const countrySection = document.getElementById('countrySection');
@@ -415,10 +454,110 @@
         const cityGrid = document.getElementById('cityGrid');
         const breadcrumb = document.getElementById('breadcrumb');
 
-        // Initialize Icons
+        // Initialize App
         document.addEventListener('DOMContentLoaded', () => {
+            renderAuthNav();
             lucide.createIcons();
         });
+
+        // Auth Navigation Render
+        function renderAuthNav() {
+            const authNav = document.getElementById('authNav');
+            if (currentUser) {
+                authNav.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs font-bold text-slate-700">👤 ${currentUser.nickname}</span>
+                        <button onclick="handleLogout()" class="text-xs text-slate-400 hover:text-slate-600 underline">로그아웃</button>
+                    </div>
+                `;
+            } else {
+                authNav.innerHTML = `
+                    <button onclick="openAuthModal('login')" class="text-xs font-semibold text-slate-600 hover:text-sky-600 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors">
+                        로그인 / 회원가입
+                    </button>
+                `;
+            }
+        }
+
+        // Auth Modal Handlers
+        function openAuthModal(mode = 'login') {
+            currentAuthMode = mode;
+            switchAuthTab(mode);
+            document.getElementById('authModal').classList.remove('hidden');
+        }
+
+        function closeAuthModal() {
+            document.getElementById('authModal').classList.add('hidden');
+            document.getElementById('authForm').reset();
+        }
+
+        function switchAuthTab(mode) {
+            currentAuthMode = mode;
+            const tabLoginBtn = document.getElementById('tabLoginBtn');
+            const tabSignupBtn = document.getElementById('tabSignupBtn');
+            const nicknameField = document.getElementById('nicknameField');
+            const authSubmitBtn = document.getElementById('authSubmitBtn');
+
+            if (mode === 'login') {
+                tabLoginBtn.className = "flex-1 py-3 text-sm font-bold text-sky-600 border-b-2 border-sky-600";
+                tabSignupBtn.className = "flex-1 py-3 text-sm font-bold text-slate-400 hover:text-slate-600";
+                nicknameField.classList.add('hidden');
+                document.getElementById('authNickname').removeAttribute('required');
+                authSubmitBtn.textContent = "로그인";
+            } else {
+                tabSignupBtn.className = "flex-1 py-3 text-sm font-bold text-sky-600 border-b-2 border-sky-600";
+                tabLoginBtn.className = "flex-1 py-3 text-sm font-bold text-slate-400 hover:text-slate-600";
+                nicknameField.classList.remove('hidden');
+                document.getElementById('authNickname').setAttribute('required', 'true');
+                authSubmitBtn.textContent = "회원가입";
+            }
+        }
+
+        async function handleAuthSubmit(e) {
+            e.preventDefault();
+            const email = document.getElementById('authEmail').value;
+            const password = document.getElementById('authPassword').value;
+            const nickname = document.getElementById('authNickname').value;
+
+            // ----------------------------------------------------
+            // [실제 백엔드 서버 연동 시 아래 fetch 주석을 해제하세요]
+            // ----------------------------------------------------
+            /*
+            try {
+                const endpoint = currentAuthMode === 'login' ? '/api/login' : '/api/signup';
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, nickname })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message);
+                currentUser = data.user;
+                localStorage.setItem('travelhub_user', JSON.stringify(currentUser));
+            } catch (err) {
+                alert(err.message);
+                return;
+            }
+            */
+
+            // 클라이언트 데모 동작 (로컬스토리지 저장)
+            currentUser = {
+                email,
+                nickname: currentAuthMode === 'signup' ? nickname : (email.split('@')[0])
+            };
+            localStorage.setItem('travelhub_user', JSON.stringify(currentUser));
+
+            alert(`${currentUser.nickname}님, ${currentAuthMode === 'login' ? '로그인' : '회원가입'}되었습니다!`);
+            renderAuthNav();
+            closeAuthModal();
+        }
+
+        function handleLogout() {
+            currentUser = null;
+            localStorage.removeItem('travelhub_user');
+            renderAuthNav();
+            alert("로그아웃 되었습니다.");
+        }
 
         // Navigation Actions
         function goHome() {
@@ -429,7 +568,6 @@
             citySection.classList.add('hidden');
             detailSection.classList.add('hidden');
 
-            // Reset Hero
             document.getElementById('heroImage').src = "https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1400&q=80";
             document.getElementById('heroBadge').textContent = "전세계 여행 커뮤니티";
             document.getElementById('heroTitle').textContent = "떠나고 싶은 당신을 위한 현지 여행 정보";
@@ -444,7 +582,6 @@
 
             const country = travelData[countryKey];
 
-            // Render Cities
             cityGrid.innerHTML = '';
             Object.keys(country.cities).forEach(cKey => {
                 const city = country.cities[cKey];
@@ -469,10 +606,7 @@
                 cityGrid.innerHTML += cardHtml;
             });
 
-            // Update UI
             document.getElementById('countryTitle').innerHTML = `${country.flag} ${country.name}의 추천 도시`;
-            
-            // Hero Update
             document.getElementById('heroImage').src = country.banner;
             document.getElementById('heroBadge').textContent = `${country.flag} ${country.name}`;
             document.getElementById('heroTitle').textContent = `${country.name}으로 떠나는 특별한 매력 여행`;
@@ -499,33 +633,23 @@
             const country = travelData[currentCountryKey];
             const city = country.cities[cityKey];
 
-            // Populate Details
             document.getElementById('detailBadge').textContent = `${country.flag} ${country.name}`;
             document.getElementById('detailCityName').textContent = city.name;
             document.getElementById('detailSeason').textContent = city.season;
             document.getElementById('detailDuration').textContent = city.duration;
             document.getElementById('detailTip').textContent = city.tip;
 
-            // Spots
-            const spotsContainer = document.getElementById('detailSpots');
-            spotsContainer.innerHTML = city.spots.map(s => `<li class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 bg-sky-500 rounded-full"></span>${s}</li>`).join('');
+            document.getElementById('detailSpots').innerHTML = city.spots.map(s => `<li class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 bg-sky-500 rounded-full"></span>${s}</li>`).join('');
+            document.getElementById('detailFoods').innerHTML = city.foods.map(f => `<li class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>${f}</li>`).join('');
 
-            // Foods
-            const foodsContainer = document.getElementById('detailFoods');
-            foodsContainer.innerHTML = city.foods.map(f => `<li class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>${f}</li>`).join('');
-
-            // Gallery
-            const galleryContainer = document.getElementById('detailGallery');
-            galleryContainer.innerHTML = city.images.map(img => `
+            document.getElementById('detailGallery').innerHTML = city.images.map(img => `
                 <div class="h-44 rounded-xl overflow-hidden border border-slate-200 shadow-sm">
                     <img src="${img}" class="w-full h-full object-cover hover:scale-105 transition-transform duration-300">
                 </div>
             `).join('');
 
-            // Render Posts
             renderPosts();
 
-            // Hero Update
             document.getElementById('heroImage').src = city.images[0];
             document.getElementById('heroBadge').textContent = `${country.name} > ${city.name}`;
             document.getElementById('heroTitle').textContent = `${city.name} 커뮤니티 & 실시간 정보`;
@@ -553,7 +677,6 @@
             lucide.createIcons();
         }
 
-        // Community Board Render & Filter
         function renderPosts() {
             if (!currentCountryKey || !currentCityKey) return;
             const city = travelData[currentCountryKey].cities[currentCityKey];
@@ -595,7 +718,6 @@
 
         function filterPosts(tag) {
             activeFilter = tag;
-            // Update filter tab button styles
             document.querySelectorAll('.cat-btn').forEach(btn => {
                 if(btn.textContent.includes(tag) || (tag === 'all' && btn.textContent === '전체')) {
                     btn.className = "cat-btn bg-slate-900 text-white px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap";
@@ -615,11 +737,14 @@
             }
         }
 
-        // Post Modal Logic
+        // Write Post Modal Handlers
         function openPostModal() {
             if (!currentCityKey) {
                 alert("게시글을 작성할 도시를 먼저 선택해주세요!");
                 return;
+            }
+            if (currentUser) {
+                document.getElementById('modalAuthor').value = currentUser.nickname;
             }
             document.getElementById('postModal').classList.remove('hidden');
         }
