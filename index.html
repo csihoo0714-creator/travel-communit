@@ -1,251 +1,656 @@
-/*
- * TravelHub 회원가입 / 로그인 (auth.js)
- *
- * 사용법: index.html 의 </body> 바로 위, 기존 <script> 블록 "뒤"에 한 줄만 추가하세요.
- *   <script src="auth.js"></script>
- *
- * ⚠️ 데모용: 계정·글·좋아요는 브라우저 localStorage에 저장됩니다.
- *    같은 브라우저 안에서만 유지되고 다른 사람과는 공유되지 않습니다.
- *    실제 회원 간 소통은 서버(Firebase, Supabase 등)가 필요하며,
- *    그때는 아래 store / Auth 부분만 서버 호출로 바꾸면 됩니다.
- */
-(() => {
-    const KEYS = { users: 'travelhub_users', session: 'travelhub_session', posts: 'travelhub_posts', likes: 'travelhub_likes' };
-    const $ = id => document.getElementById(id);
-    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-    // ---------- 저장소 (서버로 바꿀 때 교체) ----------
-    const store = {
-        get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; } },
-        set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { alert('이 브라우저에서는 데이터를 저장할 수 없습니다.'); } }
-    };
-
-    // ---------- 인증 (서버로 바꿀 때 교체) ----------
-    async function hash(pw, salt) {
-        const bytes = new TextEncoder().encode(salt + pw);
-        if (!(window.crypto && crypto.subtle)) return 'weak-' + Array.from(bytes).reduce((h, b) => (h * 31 + b) >>> 0, 7);
-        const buf = await crypto.subtle.digest('SHA-256', bytes);
-        return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    let currentUser = store.get(KEYS.session, null);
-    const Auth = {
-        async signup(nickname, email, pw) {
-            const users = store.get(KEYS.users, {});
-            if (users[email]) throw new Error('이미 가입된 이메일입니다. 로그인해 주세요.');
-            if (Object.values(users).some(u => u.nickname === nickname)) throw new Error('이미 사용 중인 닉네임입니다.');
-            const salt = crypto.randomUUID ? crypto.randomUUID() : String(Math.random());
-            users[email] = { nickname, salt, hash: await hash(pw, salt) };
-            store.set(KEYS.users, users);
-            this.start(email, nickname);
-        },
-        async login(email, pw) {
-            const u = store.get(KEYS.users, {})[email];
-            if (!u || u.hash !== await hash(pw, u.salt)) throw new Error('이메일 또는 비밀번호가 올바르지 않습니다.');
-            this.start(email, u.nickname);
-        },
-        logout() { currentUser = null; localStorage.removeItem(KEYS.session); },
-        start(email, nickname) { currentUser = { email, nickname }; store.set(KEYS.session, currentUser); }
-    };
-
-    // ---------- 로그인 / 회원가입 창 ----------
-    const field = 'w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500';
-    const label = 'block text-xs font-bold text-slate-600 mb-1';
-    document.body.insertAdjacentHTML('beforeend', `
-    <div id="authModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
-        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
-            <button type="button" id="authClose" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-6 h-6"></i></button>
-            <div class="flex border-b border-slate-200 mb-5 mr-8">
-                <button type="button" id="tabLogin" class="flex-1 pb-3 text-sm">로그인</button>
-                <button type="button" id="tabSignup" class="flex-1 pb-3 text-sm">회원가입</button>
-            </div>
-            <form id="authForm" class="space-y-4" novalidate>
-                <div id="nickWrap" class="hidden">
-                    <label class="${label}">닉네임 (2~12자)</label>
-                    <input id="authNick" type="text" maxlength="12" autocomplete="nickname" placeholder="커뮤니티에서 보여질 이름" class="${field}">
-                </div>
-                <div>
-                    <label class="${label}">이메일</label>
-                    <input id="authEmail" type="email" autocomplete="email" placeholder="example@email.com" class="${field}">
-                </div>
-                <div>
-                    <label class="${label}">비밀번호 (8자 이상)</label>
-                    <input id="authPw" type="password" autocomplete="current-password" class="${field}">
-                </div>
-                <div id="pw2Wrap" class="hidden">
-                    <label class="${label}">비밀번호 확인</label>
-                    <input id="authPw2" type="password" autocomplete="new-password" class="${field}">
-                </div>
-                <p id="authError" class="hidden text-sm text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2"></p>
-                <button type="submit" id="authSubmit" class="w-full py-2.5 text-sm font-semibold bg-sky-600 hover:bg-sky-700 text-white rounded-lg shadow-sm">로그인</button>
-            </form>
-            <p class="text-center text-[11px] text-slate-400 mt-4 leading-relaxed">데모 버전: 계정과 게시글은 현재 이 브라우저에만 저장됩니다.</p>
-        </div>
-    </div>`);
-
-    let mode = 'login', afterLogin = null;
-    const tabOff = 'text-slate-400 font-semibold border-b-[3px] border-transparent';
-
-    function setError(msg) { const el = $('authError'); el.textContent = msg; el.classList.toggle('hidden', !msg); }
-    function setMode(m) {
-        mode = m;
-        const signup = m === 'signup';
-        $('nickWrap').classList.toggle('hidden', !signup);
-        $('pw2Wrap').classList.toggle('hidden', !signup);
-        $('authSubmit').textContent = signup ? '가입하기' : '로그인';
-        $('authPw').autocomplete = signup ? 'new-password' : 'current-password';
-        $('tabLogin').className = 'flex-1 pb-3 text-sm ' + (signup ? tabOff : 'tab-active');
-        $('tabSignup').className = 'flex-1 pb-3 text-sm ' + (signup ? 'tab-active' : tabOff);
-        setError('');
-    }
-    function openAuth(m = 'login', notice = '') { setMode(m); setError(notice); $('authModal').classList.remove('hidden'); $('authEmail').focus(); }
-    function closeAuth() { $('authModal').classList.add('hidden'); $('authForm').reset(); setError(''); afterLogin = null; }
-
-    $('tabLogin').onclick = () => setMode('login');
-    $('tabSignup').onclick = () => setMode('signup');
-    $('authClose').onclick = closeAuth;
-    $('authModal').addEventListener('mousedown', e => { if (e.target.id === 'authModal') closeAuth(); });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAuth(); });
-
-    $('authForm').addEventListener('submit', async e => {
-        e.preventDefault();
-        const email = $('authEmail').value.trim().toLowerCase(), pw = $('authPw').value;
-        try {
-            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('올바른 이메일 주소를 입력해 주세요.');
-            if (mode === 'signup') {
-                const nick = $('authNick').value.trim();
-                if (nick.length < 2) throw new Error('닉네임은 2자 이상 입력해 주세요.');
-                if (pw.length < 8) throw new Error('비밀번호는 8자 이상 입력해 주세요.');
-                if (pw !== $('authPw2').value) throw new Error('비밀번호 확인이 일치하지 않습니다.');
-                await Auth.signup(nick, email, pw);
-            } else {
-                await Auth.login(email, pw);
-            }
-            const next = afterLogin;
-            closeAuth();
-            refresh();
-            if (next) next();
-        } catch (err) { setError(err.message); }
-    });
-
-    // ---------- 헤더 (로그인/회원가입 또는 닉네임/로그아웃) ----------
-    const btn = 'text-sm font-semibold px-3 py-2 rounded-lg transition-colors ';
-    const authArea = document.createElement('div');
-    authArea.className = 'flex items-center space-x-1';
-    const writeBtn = document.querySelector('button[onclick="openPostModal()"]');
-    writeBtn.parentElement.insertBefore(authArea, writeBtn);
-
-    function renderAuthArea() {
-        authArea.innerHTML = currentUser
-            ? `<span class="hidden sm:flex items-center gap-1.5 text-sm font-semibold text-slate-700 pr-1"><i data-lucide="user" class="w-4 h-4 text-sky-600"></i>${esc(currentUser.nickname)}님</span>
-               <button data-act="logout" class="${btn}text-slate-600 hover:bg-slate-100">로그아웃</button>`
-            : `<button data-act="login" class="${btn}text-slate-600 hover:bg-slate-100">로그인</button>
-               <button data-act="signup" class="${btn}text-sky-600 border border-sky-200 hover:bg-sky-50">회원가입</button>`;
-        lucide.createIcons();
-    }
-    authArea.addEventListener('click', e => {
-        const act = e.target.closest('[data-act]')?.dataset.act;
-        if (act === 'logout') { Auth.logout(); refresh(); }
-        else if (act) openAuth(act);
-    });
-    const refresh = () => { renderAuthArea(); window.renderPosts(); };
-
-    // ---------- 게시글: 로그인 필요, 내 글 삭제, 새로고침 후에도 유지 ----------
-    const postKey = () => currentCountryKey + '/' + currentCityKey;
-
-    Object.entries(store.get(KEYS.posts, {})).forEach(([k, list]) => {
-        const [c, t] = k.split('/');
-        const city = travelData[c] && travelData[c].cities[t];
-        if (city) city.posts.unshift(...list);
-    });
-
-    const openPost = window.openPostModal;
-    window.openPostModal = () => {
-        if (currentCityKey && !currentUser) {
-            afterLogin = window.openPostModal;
-            return openAuth('login', '글쓰기는 로그인 후 이용할 수 있습니다.');
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>글로벌 여행 커뮤니티 - TravelHub</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;600;700;800&display=swap');
+        body { font-family: 'Pretendard', sans-serif; }
+        .tab-active { border-bottom: 3px solid #0284c7; color: #0284c7; font-weight: 700; }
+        .glass-card { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-        openPost();
-        if (currentUser) {
-            const a = $('modalAuthor');
-            a.value = currentUser.nickname;
-            a.readOnly = true;
-            a.classList.add('bg-slate-100', 'text-slate-500');
-        }
-    };
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
 
-    const submitPost = window.handlePostSubmit;
-    window.handlePostSubmit = e => {
-        if (!currentUser) { e.preventDefault(); return openAuth('login', '로그인 후 등록할 수 있습니다.'); }
-        submitPost(e);
-        const posts = travelData[currentCountryKey].cities[currentCityKey].posts;
-        Object.assign(posts[0], { author: currentUser.nickname, authorEmail: currentUser.email, createdAt: Date.now() });
-        const all = store.get(KEYS.posts, {});
-        all[postKey()] = [posts[0], ...(all[postKey()] || [])];
-        store.set(KEYS.posts, all);
-        window.renderPosts();
-    };
-
-    window.deletePost = id => {
-        const city = travelData[currentCountryKey].cities[currentCityKey];
-        const post = city.posts.find(p => p.id === id);
-        if (!post || !currentUser || post.authorEmail !== currentUser.email || !confirm('이 글을 삭제할까요?')) return;
-        city.posts = city.posts.filter(p => p.id !== id);
-        const all = store.get(KEYS.posts, {});
-        all[postKey()] = (all[postKey()] || []).filter(p => p.id !== id);
-        store.set(KEYS.posts, all);
-        window.renderPosts();
-    };
-
-    window.likePost = id => {
-        if (!currentUser) return openAuth('login', '좋아요는 로그인 후 누를 수 있습니다.');
-        const likes = store.get(KEYS.likes, {}), list = likes[id] || [];
-        likes[id] = list.includes(currentUser.email) ? list.filter(x => x !== currentUser.email) : [...list, currentUser.email];
-        store.set(KEYS.likes, likes);
-        window.renderPosts();
-    };
-
-    const timeAgo = p => {
-        if (!p.createdAt) return p.date;
-        const m = Math.floor((Date.now() - p.createdAt) / 60000);
-        return m < 1 ? '방금 전' : m < 60 ? `${m}분 전` : m < 1440 ? `${Math.floor(m / 60)}시간 전` : `${Math.floor(m / 1440)}일 전`;
-    };
-
-    window.renderPosts = () => {
-        if (!currentCountryKey || !currentCityKey) return;
-        const city = travelData[currentCountryKey].cities[currentCityKey];
-        const list = activeFilter === 'all' ? city.posts : city.posts.filter(p => p.tag === activeFilter);
-        const likes = store.get(KEYS.likes, {});
-        if (!list.length) {
-            $('postsList').innerHTML = `<div class="bg-white rounded-xl p-8 text-center text-slate-400 border border-slate-200">등록된 이야기가 없습니다. 첫 번째 글을 등록해보세요!</div>`;
-            return;
-        }
-        $('postsList').innerHTML = list.map(p => {
-            const who = likes[p.id] || [];
-            const liked = currentUser && who.includes(currentUser.email);
-            const mine = currentUser && p.authorEmail === currentUser.email;
-            return `
-            <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm hover:border-slate-300 transition-colors">
-                <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center space-x-2">
-                        <span class="bg-sky-100 text-sky-800 text-xs font-bold px-2.5 py-1 rounded-md"># ${esc(p.tag)}</span>
-                        <span class="text-xs font-semibold text-slate-700">${esc(p.author)}</span>
-                        <span class="text-xs text-slate-400">• ${timeAgo(p)}</span>
+    <!-- Header / Navigation -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <!-- Logo -->
+                <div class="flex items-center space-x-3 cursor-pointer" onclick="goHome()">
+                    <div class="bg-sky-600 text-white p-2 rounded-xl shadow-md">
+                        <i data-lucide="plane-takeoff" class="w-6 h-6"></i>
                     </div>
-                    <div class="flex items-center gap-2">
-                        ${mine ? `<button onclick="deletePost(${p.id})" class="text-xs text-slate-400 hover:text-rose-600">삭제</button>` : ''}
-                        <button onclick="likePost(${p.id})" class="flex items-center gap-1 text-xs text-slate-500 hover:text-rose-500 transition-colors bg-slate-50 px-2.5 py-1 rounded-full border border-slate-200">
-                            <i data-lucide="heart" class="w-3.5 h-3.5 text-rose-500 ${liked ? 'fill-rose-500' : ''}"></i>
-                            <span>${p.likes + who.length}</span>
+                    <span class="text-xl font-extrabold tracking-tight text-slate-900">Travel<span class="text-sky-600">Hub</span></span>
+                </div>
+
+                <!-- Breadcrumb -->
+                <nav class="hidden sm:flex items-center space-x-2 text-sm text-slate-500 font-medium" id="breadcrumb">
+                    <span class="hover:text-sky-600 cursor-pointer" onclick="goHome()">전체 국가</span>
+                </nav>
+
+                <!-- Search / Write Action -->
+                <div class="flex items-center space-x-3">
+                    <button onclick="openPostModal()" class="bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors flex items-center space-x-1.5 shadow-sm">
+                        <i data-lucide="pen-line" class="w-4 h-4"></i>
+                        <span>글쓰기</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <!-- Banner Hero (Dynamic) -->
+        <div id="heroBanner" class="relative rounded-2xl overflow-hidden mb-8 shadow-lg bg-slate-900 text-white h-64 sm:h-80 flex items-end">
+            <img id="heroImage" src="https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1400&q=80" alt="Hero" class="absolute inset-0 w-full h-full object-cover opacity-60">
+            <div class="relative z-10 p-6 sm:p-10 max-w-2xl">
+                <span id="heroBadge" class="bg-sky-500 text-white text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">전세계 여행 커뮤니티</span>
+                <h1 id="heroTitle" class="text-3xl sm:text-4xl font-extrabold mt-2 leading-tight">떠나고 싶은 당신을 위한 현지 여행 정보</h1>
+                <p id="heroDesc" class="text-slate-200 mt-2 text-sm sm:text-base">국가와 도시를 선택하여 추천 명소, 음식, 교통 팁 및 커뮤니티 소식을 확인해보세요.</p>
+            </div>
+        </div>
+
+        <!-- 1. Country Selection View -->
+        <section id="countrySection" class="fade-in">
+            <h2 class="text-2xl font-bold text-slate-900 mb-6 flex items-center gap-2">
+                <i data-lucide="globe" class="text-sky-600"></i> 여행할 국가를 선택하세요
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- 대한민국 -->
+                <div onclick="selectCountry('kr')" class="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-slate-200 cursor-pointer">
+                    <div class="h-48 overflow-hidden relative">
+                        <img src="https://images.unsplash.com/photo-1546874177-9e664107314e?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D" alt="한국" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                        <span class="absolute top-4 left-4 text-3xl">🇰🇷</span>
+                    </div>
+                    <div class="p-6">
+                        <h3 class="text-xl font-bold text-slate-900 group-hover:text-sky-600 transition-colors">대한민국 (South Korea)</h3>
+                        <p class="text-slate-500 text-sm mt-2">전통과 현대가 공존하는 한국. 대표 도시 서울과 혁신의 세종시를 만나보세요.</p>
+                        <div class="mt-4 flex items-center text-xs font-semibold text-sky-600 gap-1">
+                            <span>도시 2개 선택 가능</span>
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 호주 -->
+                <div onclick="selectCountry('au')" class="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-slate-200 cursor-pointer">
+                    <div class="h-48 overflow-hidden relative">
+                        <img src="https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?auto=format&fit=crop&w=800&q=80" alt="호주" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                        <span class="absolute top-4 left-4 text-3xl">🇦🇺</span>
+                    </div>
+                    <div class="p-6">
+                        <h3 class="text-xl font-bold text-slate-900 group-hover:text-sky-600 transition-colors">호주 (Australia)</h3>
+                        <p class="text-slate-500 text-sm mt-2">웅장한 대자연과 활기찬 도시 문화. 시드니와 멜버른으로 떠나보세요.</p>
+                        <div class="mt-4 flex items-center text-xs font-semibold text-sky-600 gap-1">
+                            <span>도시 2개 선택 가능</span>
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 일본 -->
+                <div onclick="selectCountry('jp')" class="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-slate-200 cursor-pointer">
+                    <div class="h-48 overflow-hidden relative">
+                        <img src="https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=800&q=80" alt="일본" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                        <span class="absolute top-4 left-4 text-3xl">🇯🇵</span>
+                    </div>
+                    <div class="p-6">
+                        <h3 class="text-xl font-bold text-slate-900 group-hover:text-sky-600 transition-colors">일본 (Japan)</h3>
+                        <p class="text-slate-500 text-sm mt-2">다채로운 미식과 사계절의 감성. 화려한 도쿄와 맛과 재미의 오사카.</p>
+                        <div class="mt-4 flex items-center text-xs font-semibold text-sky-600 gap-1">
+                            <span>도시 2개 선택 가능</span>
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. City Selection View -->
+        <section id="citySection" class="hidden fade-in">
+            <div class="flex justify-between items-center mb-6">
+                <h2 id="countryTitle" class="text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    도시 선택
+                </h2>
+                <button onclick="goHome()" class="text-sm font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1">
+                    <i data-lucide="arrow-left" class="w-4 h-4"></i> 국가 변경
+                </button>
+            </div>
+            <div id="cityGrid" class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- Dynamic City Cards Injection -->
+            </div>
+        </section>
+
+        <!-- 3. City Detail & Community View -->
+        <section id="detailSection" class="hidden fade-in">
+            <button onclick="backToCities()" class="text-sm font-semibold text-slate-500 hover:text-slate-800 mb-6 flex items-center gap-1">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i> 도시 목록으로 돌아가기
+            </button>
+
+            <!-- City Core Info Card -->
+            <div class="bg-white rounded-2xl p-6 sm:p-8 border border-slate-200 shadow-sm mb-10">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-100">
+                    <div>
+                        <span id="detailBadge" class="text-xs font-bold text-sky-600 bg-sky-50 px-3 py-1 rounded-full border border-sky-100">대한민국</span>
+                        <h2 id="detailCityName" class="text-3xl font-extrabold text-slate-900 mt-2">서울 (Seoul)</h2>
+                    </div>
+                    <div class="flex items-center space-x-6 text-slate-600 text-sm">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="sun" class="w-5 h-5 text-amber-500"></i>
+                            <div>
+                                <p class="text-xs text-slate-400 font-medium">추천 계절</p>
+                                <p id="detailSeason" class="font-semibold text-slate-700">봄 & 가을</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="clock" class="w-5 h-5 text-sky-500"></i>
+                            <div>
+                                <p class="text-xs text-slate-400 font-medium">권장 여행기간</p>
+                                <p id="detailDuration" class="font-semibold text-slate-700">3박 4일</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Highlight Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+                    <div class="bg-slate-50 p-5 rounded-xl border border-slate-100">
+                        <h4 class="font-bold text-slate-900 flex items-center gap-2 mb-2">
+                            <i data-lucide="map-pin" class="w-4 h-4 text-sky-600"></i> 필수 명소 Top 3
+                        </h4>
+                        <ul id="detailSpots" class="text-sm text-slate-600 space-y-1"></ul>
+                    </div>
+                    <div class="bg-slate-50 p-5 rounded-xl border border-slate-100">
+                        <h4 class="font-bold text-slate-900 flex items-center gap-2 mb-2">
+                            <i data-lucide="utensils" class="w-4 h-4 text-emerald-600"></i> 대표 먹거리
+                        </h4>
+                        <ul id="detailFoods" class="text-sm text-slate-600 space-y-1"></ul>
+                    </div>
+                    <div class="bg-slate-50 p-5 rounded-xl border border-slate-100">
+                        <h4 class="font-bold text-slate-900 flex items-center gap-2 mb-2">
+                            <i data-lucide="bus" class="w-4 h-4 text-indigo-600"></i> 교통 & 현지 팁
+                        </h4>
+                        <p id="detailTip" class="text-sm text-slate-600 leading-relaxed"></p>
+                    </div>
+                </div>
+
+                <!-- Gallery Grid -->
+                <div class="mt-8">
+                    <h4 class="font-bold text-slate-900 mb-4 flex items-center gap-2">
+                        <i data-lucide="image" class="w-4 h-4 text-sky-600"></i> 도시 포토 갤러리
+                    </h4>
+                    <div id="detailGallery" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <!-- Dynamic Images -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- City Community & Board -->
+            <div>
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                    <div>
+                        <h3 class="text-2xl font-bold text-slate-900">여행자 커뮤니티</h3>
+                        <p class="text-sm text-slate-500 mt-1">현지인과 여행자들이 공유하는 진짜 팁과 질문들</p>
+                    </div>
+
+                    <!-- Category Filters -->
+                    <div class="flex gap-2 overflow-x-auto pb-2 sm:pb-0">
+                        <button onclick="filterPosts('all')" class="cat-btn bg-slate-900 text-white px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap">전체</button>
+                        <button onclick="filterPosts('팁')" class="cat-btn bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap">💡 꿀팁</button>
+                        <button onclick="filterPosts('맛집')" class="cat-btn bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap">🍜 맛집</button>
+                        <button onclick="filterPosts('숙소')" class="cat-btn bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap">🏨 숙소</button>
+                        <button onclick="filterPosts('동행')" class="cat-btn bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap">🙋‍♂️ 동행</button>
+                    </div>
+                </div>
+
+                <!-- Post List Container -->
+                <div id="postsList" class="space-y-4">
+                    <!-- Dynamic Posts Injection -->
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200 py-8 mt-12">
+        <div class="max-w-7xl mx-auto px-4 text-center text-slate-500 text-sm">
+            <p>© 2026 TravelHub. 대한민국, 호주, 일본 대표 도시 여행 가이드 & 커뮤니티</p>
+        </div>
+    </footer>
+
+    <!-- Write Post Modal -->
+    <div id="postModal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+            <button onclick="closePostModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+                <i data-lucide="x" class="w-6 h-6"></i>
+            </button>
+            <h3 class="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+                <i data-lucide="pen-tool" class="text-sky-600"></i> 새 이야기 작성하기
+            </h3>
+            
+            <form id="postForm" onsubmit="handlePostSubmit(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">카테고리</label>
+                    <select id="modalTag" class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500">
+                        <option value="팁">💡 꿀팁</option>
+                        <option value="맛집">🍜 맛집</option>
+                        <option value="숙소">🏨 숙소</option>
+                        <option value="동행">🙋‍♂️ 동행</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">작성자 이름</label>
+                    <input type="text" id="modalAuthor" placeholder="닉네임을 입력하세요" required class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">제목</label>
+                    <input type="text" id="modalTitle" placeholder="제목을 작성해주세요" required class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-600 uppercase mb-1">내용</label>
+                    <textarea id="modalContent" rows="4" placeholder="여행 정보나 궁금한 점을 공유해보세요." required class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-sky-500"></textarea>
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closePostModal()" class="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-lg">취소</button>
+                    <button type="submit" class="px-5 py-2 text-sm font-semibold bg-sky-600 hover:bg-sky-700 text-white rounded-lg shadow-sm">등록하기</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- JavaScript Data & Logic -->
+    <script>
+        // Travel Database (3 Countries, 2 Cities Each - South Korea features Sejong)
+        const travelData = {
+            kr: {
+                name: "대한민국",
+                flag: "🇰🇷",
+                banner: "https://images.unsplash.com/photo-1538485399081-7191377e8241?auto=format&fit=crop&w=1400&q=80",
+                cities: {
+                    seoul: {
+                        name: "서울 (Seoul)",
+                        desc: "과거와 미래가 완벽하게 공존하는 대한민국의 역동적인 수도",
+                        season: "9월 ~ 11월 (가을)",
+                        duration: "3박 4일",
+                        spots: ["N서울타워 & 남산공원", "경복궁 & 북촌한옥마을", "성수동 핫플레이스"],
+                        foods: ["명동 K-길거리 음식", "마장동 한우", "광장시장 빈대떡"],
+                        tip: "기후동행카드나 T-money 교통카드를 이용하면 지하철과 버스를 편리하고 저렴하게 이용할 수 있습니다.",
+                        images: [
+                            "https://images.unsplash.com/photo-1546874177-9e664107314e?q=80&w=1169&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D",
+                            "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1517154421773-0529f29ea451?auto=format&fit=crop&w=600&q=80"
+                        ],
+                        posts: [
+                            { id: 1, tag: "팁", title: "경복궁 한복 착용 시 무료입장 팁!", author: "서울매니아", date: "2시간 전", likes: 24, content: "한복을 빌려 입고 방문하면 경복궁 입장이 무료입니다. 근처 한옥 상점가에서 인생샷도 남겨보세요." },
+                            { id: 2, tag: "맛집", title: "성수동 카페거리 감성 카페 3곳 추천", author: "카페라떼", date: "1일 전", likes: 45, content: "디저트와 커피 분위기가 모두 뛰어난 성수동 디저트 맛집 목록입니다." }
+                        ]
+                    },
+                    sejong: {
+                        name: "세종특별자치시 (Sejong)",
+                        desc: "풍부한 녹지와 이응다리가 반겨주는 대한민국의 행정중심복합도시",
+                        season: "4월 ~ 6월, 10월",
+                        duration: "1박 2일",
+                        spots: ["이응다리 (금강보행교)", "세종호수공원", "국립세종수목원 사계절온실"],
+                        foods: ["조치원 파닭", "세종 암소 한우", "호수공원 브런치"],
+                        tip: "이응다리의 화려한 조명 야경은 저녁 8시 이후가 피크입니다. 공공자전거 '어울링'을 활용해 호수공원을 산책해보세요.",
+                        images: [
+                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D",
+                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D",
+                            "https://images.unsplash.com/photo-1660958276339-21d63cc49a21?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=NHwxMjA3fDA%3D"
+                        ],
+                        posts: [
+                            { id: 3, tag: "팁", title: "이응다리 밤산책 및 어울링 자전거 이용 후기", author: "세종시민", date: "5시간 전", likes: 18, content: "금강 위를 도는 복층 고리형 보행교 야경이 예술입니다. 어울링 자전거 앱 설치 후 1시간 천원으로 즐기기 완벽해요!" },
+                            { id: 4, tag: "맛집", title: "조치원 원조 파닭 맛집 추천", author: "치킨마스터", date: "2일 전", likes: 32, content: "알싸한 파향과 바삭한 튀김 옷이 어우러진 신안리 파닭 추천합니다." }
+                        ]
+                    }
+                }
+            },
+            au: {
+                name: "호주",
+                flag: "🇦🇺",
+                banner: "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?auto=format&fit=crop&w=1400&q=80",
+                cities: {
+                    sydney: {
+                        name: "시드니 (Sydney)",
+                        desc: "세계적인 오페라하우스와 황홀한 하버 뷰가 펼쳐지는 호주 최대의 도시",
+                        season: "10월 ~ 4월",
+                        duration: "4박 5일",
+                        spots: ["시드니 오페라 하우스 & 하버 브릿지", "본다이 비치 (Bondi Beach)", "블루마운틴 국립공원"],
+                        foods: ["피쉬 앤 칩스", "호주산 스테이크", "플랫 화이트 커피"],
+                        tip: "오팔(Opal) 교통카드를 발급받으면 일요일 대중교통 할인 혜택을 크게 누릴 수 있습니다.",
+                        images: [
+                            "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1523428096881-5bd79d04300f?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1549180030-48bf079fb38a?auto=format&fit=crop&w=600&q=80"
+                        ],
+                        posts: [
+                            { id: 5, tag: "팁", title: "본다이 비치에서 쿠지 비치 해안 산책로 코스", author: "호주서퍼", date: "3시간 전", likes: 38, content: "2시간 코스로 해안 절경을 감상하며 걷기 최적인 프리미엄 트레킹 코스입니다." }
+                        ]
+                    },
+                    melbourne: {
+                        name: "멜버른 (Melbourne)",
+                        desc: "고풍스러운 아케이드 거리와 세계적인 커피 문화를 간직한 문화 예술의 도시",
+                        season: "11월 ~ 3월",
+                        duration: "3박 4일",
+                        spots: ["플린더스 스트리트역", "그레이트 오션 로드", "호시어 골목 (그래피티 거리)"],
+                        foods: ["아보카도 토스트 (Brunch)", "스페셜티 플랫화이트", "미트파이"],
+                        tip: "시내 중심가(CBD) 구역 내에서는 무료 트램(Free Tram Zone)을 자유롭게 이용할 수 있습니다.",
+                        images: [
+                            "https://images.unsplash.com/photo-1514395462725-fb4566210144?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1545044846-351ba102b6d5?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1516483638261-f4dbaf036963?auto=format&fit=crop&w=600&q=80"
+                        ],
+                        posts: [
+                            { id: 6, tag: "맛집", title: "멜버른 3대 카페 솔직 방문 비교", author: "커피매니아", date: "4시간 전", likes: 51, content: "디센트럴, 뼛속까지 시원한 아이스 플랫화이트와 원두 풍미 후기입니다." }
+                        ]
+                    }
+                }
+            },
+            jp: {
+                name: "일본",
+                flag: "🇯🇵",
+                banner: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=1400&q=80",
+                cities: {
+                    tokyo: {
+                        name: "도쿄 (Tokyo)",
+                        desc: "네온사인 가득한 도심과 깊은 전통이 공존하는 아시아 대표 미식·쇼핑 도합 도시",
+                        season: "3월 ~ 5월, 10월 ~ 11월",
+                        duration: "3박 4일",
+                        spots: ["시부야 스크램블 교차로 & 스카이", "아사쿠사 센소지", "도쿄 타워"],
+                        foods: ["차슈 돈코츠 라멘", "신선한 스시", "규카츠"],
+                        tip: "외국인 전용 도쿄 지하철 패스(24/48/72시간권)를 구입하면 정해진 기간 내 무제한 탑승이 가능합니다.",
+                        images: [
+                            "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1542051841857-5f90071e7989?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=600&q=80"
+                        ],
+                        posts: [
+                            { id: 7, tag: "팁", title: "시부야 스카이 전망대 노을 타임 예약 꿀팁", author: "도쿄홀릭", date: "1시간 전", likes: 62, content: "일몰 1시간 전에 입장해야 낮 풍경, 노을, 야경을 한 번에 다 담을 수 있어요." }
+                        ]
+                    },
+                    osaka: {
+                        name: "오사카 (Osaka)",
+                        desc: "맛있는 음식과 활기찬 활력이 가득한 천하의 부엌이자 엔터테인먼트 중심지",
+                        season: "3월 ~ 5월, 10월 ~ 11월",
+                        duration: "2박 3일",
+                        spots: ["도톤보리 & 글리코상", "오사카성", "유니버설 스튜디오 재팬"],
+                        foods: ["타코야키", "오코노미야키", "쿠시카츠 (꼬치튀김)"],
+                        tip: "주요 관광지 무료 입장과 교통이 결합된 '오사카 주유패스' 구입을 추천합니다.",
+                        images: [
+                            "https://images.unsplash.com/photo-1590559899731-a382839e5549?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1570077188670-e3a8d69ac5ff?auto=format&fit=crop&w=600&q=80",
+                            "https://images.unsplash.com/photo-1534447677768-be436bb09401?auto=format&fit=crop&w=600&q=80"
+                        ],
+                        posts: [
+                            { id: 8, tag: "맛집", title: "도톤보리 줄 안 서는 타코야키 숨은 맛집", author: "오사카식객", date: "6시간 전", likes: 29, content: "글리코상 근처 골목길 안쪽에 위치한 현지인 위주 타코야키 가게 공유합니다." }
+                        ]
+                    }
+                }
+            }
+        };
+
+        // State Tracking
+        let currentCountryKey = null;
+        let currentCityKey = null;
+        let activeFilter = 'all';
+
+        // DOM Elements
+        const countrySection = document.getElementById('countrySection');
+        const citySection = document.getElementById('citySection');
+        const detailSection = document.getElementById('detailSection');
+        const cityGrid = document.getElementById('cityGrid');
+        const breadcrumb = document.getElementById('breadcrumb');
+
+        // Initialize Icons
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+        });
+
+        // Navigation Actions
+        function goHome() {
+            currentCountryKey = null;
+            currentCityKey = null;
+
+            countrySection.classList.remove('hidden');
+            citySection.classList.add('hidden');
+            detailSection.classList.add('hidden');
+
+            // Reset Hero
+            document.getElementById('heroImage').src = "https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1400&q=80";
+            document.getElementById('heroBadge').textContent = "전세계 여행 커뮤니티";
+            document.getElementById('heroTitle').textContent = "떠나고 싶은 당신을 위한 현지 여행 정보";
+            document.getElementById('heroDesc').textContent = "국가와 도시를 선택하여 추천 명소, 음식, 교통 팁 및 커뮤니티 소식을 확인해보세요.";
+
+            updateBreadcrumb();
+        }
+
+        function selectCountry(countryKey) {
+            currentCountryKey = countryKey;
+            currentCityKey = null;
+
+            const country = travelData[countryKey];
+
+            // Render Cities
+            cityGrid.innerHTML = '';
+            Object.keys(country.cities).forEach(cKey => {
+                const city = country.cities[cKey];
+                const cardHtml = `
+                    <div onclick="selectCity('${cKey}')" class="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-slate-200 cursor-pointer flex flex-col">
+                        <div class="h-56 overflow-hidden relative">
+                            <img src="${city.images[0]}" alt="${city.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                            <span class="absolute top-4 left-4 bg-slate-900/60 backdrop-blur-md text-white text-xs font-bold px-3 py-1 rounded-full">${country.flag} ${country.name}</span>
+                        </div>
+                        <div class="p-6 flex-grow flex flex-col justify-between">
+                            <div>
+                                <h3 class="text-2xl font-bold text-slate-900 group-hover:text-sky-600 transition-colors">${city.name}</h3>
+                                <p class="text-slate-500 text-sm mt-2 leading-relaxed">${city.desc}</p>
+                            </div>
+                            <div class="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs font-semibold text-sky-600">
+                                <span>상세 가이드 & 커뮤니티 보기</span>
+                                <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                cityGrid.innerHTML += cardHtml;
+            });
+
+            // Update UI
+            document.getElementById('countryTitle').innerHTML = `${country.flag} ${country.name}의 추천 도시`;
+            
+            // Hero Update
+            document.getElementById('heroImage').src = country.banner;
+            document.getElementById('heroBadge').textContent = `${country.flag} ${country.name}`;
+            document.getElementById('heroTitle').textContent = `${country.name}으로 떠나는 특별한 매력 여행`;
+            document.getElementById('heroDesc').textContent = `${country.name}의 대표 명소 도시를 선택하고 다양한 맞춤 여행 팁을 얻어가세요.`;
+
+            countrySection.classList.add('hidden');
+            citySection.classList.remove('hidden');
+            detailSection.classList.add('hidden');
+
+            updateBreadcrumb();
+            lucide.createIcons();
+        }
+
+        function backToCities() {
+            if (currentCountryKey) {
+                selectCountry(currentCountryKey);
+            } else {
+                goHome();
+            }
+        }
+
+        function selectCity(cityKey) {
+            currentCityKey = cityKey;
+            const country = travelData[currentCountryKey];
+            const city = country.cities[cityKey];
+
+            // Populate Details
+            document.getElementById('detailBadge').textContent = `${country.flag} ${country.name}`;
+            document.getElementById('detailCityName').textContent = city.name;
+            document.getElementById('detailSeason').textContent = city.season;
+            document.getElementById('detailDuration').textContent = city.duration;
+            document.getElementById('detailTip').textContent = city.tip;
+
+            // Spots
+            const spotsContainer = document.getElementById('detailSpots');
+            spotsContainer.innerHTML = city.spots.map(s => `<li class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 bg-sky-500 rounded-full"></span>${s}</li>`).join('');
+
+            // Foods
+            const foodsContainer = document.getElementById('detailFoods');
+            foodsContainer.innerHTML = city.foods.map(f => `<li class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>${f}</li>`).join('');
+
+            // Gallery
+            const galleryContainer = document.getElementById('detailGallery');
+            galleryContainer.innerHTML = city.images.map(img => `
+                <div class="h-44 rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+                    <img src="${img}" class="w-full h-full object-cover hover:scale-105 transition-transform duration-300">
+                </div>
+            `).join('');
+
+            // Render Posts
+            renderPosts();
+
+            // Hero Update
+            document.getElementById('heroImage').src = city.images[0];
+            document.getElementById('heroBadge').textContent = `${country.name} > ${city.name}`;
+            document.getElementById('heroTitle').textContent = `${city.name} 커뮤니티 & 실시간 정보`;
+            document.getElementById('heroDesc').textContent = city.desc;
+
+            countrySection.classList.add('hidden');
+            citySection.classList.add('hidden');
+            detailSection.classList.remove('hidden');
+
+            updateBreadcrumb();
+            lucide.createIcons();
+        }
+
+        function updateBreadcrumb() {
+            let html = `<span class="hover:text-sky-600 cursor-pointer" onclick="goHome()">전체 국가</span>`;
+            if (currentCountryKey) {
+                const country = travelData[currentCountryKey];
+                html += ` <i data-lucide="chevron-right" class="w-3.5 h-3.5 inline"></i> <span class="hover:text-sky-600 cursor-pointer" onclick="selectCountry('${currentCountryKey}')">${country.name}</span>`;
+            }
+            if (currentCityKey) {
+                const city = travelData[currentCountryKey].cities[currentCityKey];
+                html += ` <i data-lucide="chevron-right" class="w-3.5 h-3.5 inline"></i> <span class="text-slate-900 font-bold">${city.name}</span>`;
+            }
+            breadcrumb.innerHTML = html;
+            lucide.createIcons();
+        }
+
+        // Community Board Render & Filter
+        function renderPosts() {
+            if (!currentCountryKey || !currentCityKey) return;
+            const city = travelData[currentCountryKey].cities[currentCityKey];
+            const postsContainer = document.getElementById('postsList');
+
+            const filtered = activeFilter === 'all' 
+                ? city.posts 
+                : city.posts.filter(p => p.tag === activeFilter);
+
+            if (filtered.length === 0) {
+                postsContainer.innerHTML = `
+                    <div class="bg-white rounded-xl p-8 text-center text-slate-400 border border-slate-200">
+                        등록된 이야기 및 질문이 없습니다. 첫 번째 글을 등록해보세요!
+                    </div>
+                `;
+                return;
+            }
+
+            postsContainer.innerHTML = filtered.map(post => `
+                <div class="bg-white rounded-xl p-5 border border-slate-200 shadow-sm hover:border-slate-300 transition-colors">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center space-x-2">
+                            <span class="bg-sky-100 text-sky-800 text-xs font-bold px-2.5 py-1 rounded-md"># ${post.tag}</span>
+                            <span class="text-xs font-semibold text-slate-700">${post.author}</span>
+                            <span class="text-xs text-slate-400">• ${post.date}</span>
+                        </div>
+                        <button onclick="likePost(${post.id})" class="flex items-center gap-1 text-xs text-slate-500 hover:text-rose-500 transition-colors bg-slate-50 px-2.5 py-1 rounded-full border border-slate-200">
+                            <i data-lucide="heart" class="w-3.5 h-3.5 text-rose-500"></i>
+                            <span>${post.likes}</span>
                         </button>
                     </div>
+                    <h4 class="font-bold text-slate-900 text-base mb-1">${post.title}</h4>
+                    <p class="text-slate-600 text-sm leading-relaxed">${post.content}</p>
                 </div>
-                <h4 class="font-bold text-slate-900 text-base mb-1">${esc(p.title)}</h4>
-                <p class="text-slate-600 text-sm leading-relaxed whitespace-pre-line">${esc(p.content)}</p>
-            </div>`;
-        }).join('');
-        lucide.createIcons();
-    };
+            `).join('');
 
-    renderAuthArea();
-})();
+            lucide.createIcons();
+        }
+
+        function filterPosts(tag) {
+            activeFilter = tag;
+            // Update filter tab button styles
+            document.querySelectorAll('.cat-btn').forEach(btn => {
+                if(btn.textContent.includes(tag) || (tag === 'all' && btn.textContent === '전체')) {
+                    btn.className = "cat-btn bg-slate-900 text-white px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap";
+                } else {
+                    btn.className = "cat-btn bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap";
+                }
+            });
+            renderPosts();
+        }
+
+        function likePost(postId) {
+            const city = travelData[currentCountryKey].cities[currentCityKey];
+            const post = city.posts.find(p => p.id === postId);
+            if (post) {
+                post.likes += 1;
+                renderPosts();
+            }
+        }
+
+        // Post Modal Logic
+        function openPostModal() {
+            if (!currentCityKey) {
+                alert("게시글을 작성할 도시를 먼저 선택해주세요!");
+                return;
+            }
+            document.getElementById('postModal').classList.remove('hidden');
+        }
+
+        function closePostModal() {
+            document.getElementById('postModal').classList.add('hidden');
+            document.getElementById('postForm').reset();
+        }
+
+        function handlePostSubmit(e) {
+            e.preventDefault();
+            const tag = document.getElementById('modalTag').value;
+            const author = document.getElementById('modalAuthor').value;
+            const title = document.getElementById('modalTitle').value;
+            const content = document.getElementById('modalContent').value;
+
+            const city = travelData[currentCountryKey].cities[currentCityKey];
+            const newPost = {
+                id: Date.now(),
+                tag,
+                author,
+                title,
+                content,
+                date: "방금 전",
+                likes: 0
+            };
+
+            city.posts.unshift(newPost);
+            closePostModal();
+            renderPosts();
+        }
+    </script>
+</body>
+</html>
